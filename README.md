@@ -105,7 +105,7 @@ Since 0.10, Neovim's TUI is a separate process that spawns its own embedded serv
 
 **Symptom:** with `vim.pack`, every start shows `vim.pack: Installing plugins (n/24)` even though all plugins are already in `~/.local/share/nvim/site/pack/core/opt`.
 
-iSH returns `DT_UNKNOWN` for every directory entry (the type is hard-coded to `0` in its `getdents` implementation). POSIX allows this, but libuv/luv then report the entry type as `nil`. vim.pack compares its lockfile against the plugin directory using those types, decides no plugin is installed, and reinstalls everything. Any plugin that lists directories through `vim.fs.dir` / `vim.uv.fs_scandir` is affected the same way.
+iSH returns `DT_UNKNOWN` for every directory entry (the type is hard-coded to `0` in its `getdents` implementation). POSIX allows this, but libuv/luv then report the entry type as `nil`. In Neovim 0.12.2 (the version Alpine v3.24 ships), vim.pack compares its lockfile against the plugin directory using those types, decides no plugin is installed, and reinstalls everything. Neovim 0.12.3+ falls back to `lstat` inside `vim.fs.dir()` (neovim/neovim#39612), but plugins that call `vim.uv.fs_scandir_next()` directly still get `nil` (luvit/luv#660).
 
 You can check for it like this:
 
@@ -115,7 +115,7 @@ nvim12 --headless --clean \
 # before the fix: "oil.nvim nil"; after: "oil.nvim directory"
 ```
 
-**Fix:** `libshim.so` wraps `readdir()` and `scandir()`. When `d_type` is unknown, it fills it in with `lstat()`.
+**Fix:** `libshim.so` wraps `readdir()` and `scandir()`. When `d_type` is unknown, it fills it in with `lstat()`. This fixes both vim.pack on 0.12.2 and plugins that read directories through luv directly.
 
 ## How it fits together
 
@@ -138,7 +138,7 @@ $PREFIX/usr/bin/nvim (patched)       # fix 3
 - **Git is iSH's 2.32.** That was enough for `vim.pack` in testing.
 - **SIGSYS stays ignored for child processes.** In practice this helps them as well, but a program that really depends on an unimplemented syscall will fail with an error instead of crashing.
 - **Other binaries from v3.24** (LSP servers via mason, etc.) are not handled by this launcher. The same techniques apply to them, though.
-- Tested with Neovim 0.12.2 from Alpine v3.24 on iSH with an Alpine v3.14 base, on iPhone.
+- Tested with Neovim 0.12.2 from Alpine v3.24 on iSH 1.3.2 (build 494, App Store) with an Alpine v3.14 base, iOS 26.5, iPhone 17e.
 
 ## Troubleshooting
 
@@ -151,8 +151,9 @@ $PREFIX/usr/bin/nvim (patched)       # fix 3
 
 These workarounds stand in for real fixes that belong upstream:
 
-- **iSH:** `getdents`/`getdents64` always report `d_type = DT_UNKNOWN`. The type is hard-coded to `0` in [`fs/dir.c`](https://github.com/ish-app/ish/blob/master/fs/dir.c). The SIGSYS problem is already fixed on master, so only a release is needed.
-- **Neovim / vim.pack:** fall back to `fs_stat` when a directory entry's type is unknown. This also happens on some network and older filesystems outside iSH.
+- **iSH:** `getdents`/`getdents64` always report `d_type = DT_UNKNOWN`. The type is hard-coded to `0` in [`fs/dir.c`](https://github.com/ish-app/ish/blob/master/fs/dir.c). Reported as ish-app/ish#2830. The SIGSYS problem is already fixed on master, so only a release is needed.
+- **Neovim:** already fixed. `vim.fs.dir()` falls back to `lstat` since v0.12.3 (neovim/neovim#39612). Alpine v3.24 still ships 0.12.2.
+- **luv:** `fs_scandir_next()` returns no type for `DT_UNKNOWN` (luvit/luv#660), so plugins calling it directly still need the shim.
 
 Contributions and reports are welcome.
 
