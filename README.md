@@ -89,9 +89,9 @@ Setting an `RPATH` with iSH's patchelf/musl did not take effect in testing. The 
 
 **Symptom:** `zsh: invalid system call`, exit code 159 (= 128 + SIGSYS).
 
-When a program makes a syscall that iSH doesn't implement, iSH delivers **SIGSYS**, whose default action kills the process. libuv and musl routinely probe newer syscalls and fall back on `ENOSYS`, but they never get the chance.
+When a program makes a syscall that iSH doesn't implement, older iSH builds deliver **SIGSYS**, whose default action kills the process. libuv and musl routinely probe newer syscalls and fall back on `ENOSYS`, but they never get the chance. iSH's master branch already returns plain `ENOSYS` instead (commit [`f8a7e44`](https://github.com/ish-app/ish/commit/f8a7e44c), Oct 2023), but the App Store build used for testing still showed the old behaviour.
 
-**Fix:** the launcher runs `trap '' SYS`. An ignored disposition survives `exec`, so the syscall simply returns `ENOSYS` and the fallback path runs.
+**Fix:** the launcher runs `trap '' SYS`. An ignored disposition survives `exec`, so the syscall simply returns `ENOSYS` and the fallback path runs. On iSH builds that include `f8a7e44`, this trap is a harmless no-op.
 
 ### 6. The built-in TUI dies on startup
 
@@ -105,7 +105,7 @@ Since 0.10, Neovim's TUI is a separate process that spawns its own embedded serv
 
 **Symptom:** with `vim.pack`, every start shows `vim.pack: Installing plugins (n/24)` even though all plugins are already in `~/.local/share/nvim/site/pack/core/opt`.
 
-iSH's filesystem returns `DT_UNKNOWN` for every directory entry. POSIX allows this, but libuv/luv then report the entry type as `nil`. vim.pack compares its lockfile against the plugin directory using those types, decides no plugin is installed, and reinstalls everything. Any plugin that lists directories through `vim.fs.dir` / `vim.uv.fs_scandir` is affected the same way.
+iSH returns `DT_UNKNOWN` for every directory entry (the type is hard-coded to `0` in its `getdents` implementation). POSIX allows this, but libuv/luv then report the entry type as `nil`. vim.pack compares its lockfile against the plugin directory using those types, decides no plugin is installed, and reinstalls everything. Any plugin that lists directories through `vim.fs.dir` / `vim.uv.fs_scandir` is affected the same way.
 
 You can check for it like this:
 
@@ -151,7 +151,7 @@ $PREFIX/usr/bin/nvim (patched)       # fix 3
 
 These workarounds stand in for real fixes that belong upstream:
 
-- **iSH:** `getdents` returns `DT_UNKNOWN`. Unimplemented syscalls raise SIGSYS instead of only returning `ENOSYS`.
+- **iSH:** `getdents`/`getdents64` always report `d_type = DT_UNKNOWN`. The type is hard-coded to `0` in [`fs/dir.c`](https://github.com/ish-app/ish/blob/master/fs/dir.c). The SIGSYS problem is already fixed on master, so only a release is needed.
 - **Neovim / vim.pack:** fall back to `fs_stat` when a directory entry's type is unknown. This also happens on some network and older filesystems outside iSH.
 
 Contributions and reports are welcome.
